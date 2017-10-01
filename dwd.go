@@ -1,10 +1,15 @@
 package main
 
 import "bufio"
+import "gopkg.in/alecthomas/kingpin.v2"
 import "fmt"
 import "encoding/csv"
 import "io"
 import "os"
+
+var (
+	filename = kingpin.Arg("filename", "Filename to load").Required().String()
+)
 
 func check(err error) {
 	if err != nil {
@@ -49,7 +54,8 @@ RECORDS:
 }
 
 func main() {
-	column_names, units, descriptions := parse_file("example_headers")
+	kingpin.Parse()
+	column_names, units, descriptions := parse_file(*filename)
 	fmt.Println(column_names)
 	fmt.Println(units)
 	fmt.Println(descriptions)
