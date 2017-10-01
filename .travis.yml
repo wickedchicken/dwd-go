@@ -1,0 +1,14 @@
+language: go
+
+go:
+        - 1.9
+        - release
+
+before_script:
+        - GO_FILES=$(find . -iname '*.go')
+        - PKGS=$(go list ./...)
+
+script:
+        - test -z $(gofmt -s -l $GO_FILES)
+        - go test -v -race $PKGS
+        - go vet $PKGS
