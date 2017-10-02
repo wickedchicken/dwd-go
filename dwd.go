@@ -17,7 +17,7 @@ func check(err error) {
 	}
 }
 
-func parse_file(filename string) ([]string, []string, []string) {
+func parse_file(filename string) ([]string, []string, []string, map[string][]string) {
 	f, err := os.Open(filename)
 	check(err)
 	defer f.Close()
@@ -25,6 +25,8 @@ func parse_file(filename string) ([]string, []string, []string) {
 	var column_names []string
 	var units []string
 	var descriptions []string
+
+	columns := make(map[string][]string)
 
 	r := csv.NewReader(bufio.NewReader(f))
 	r.Comma = ';'
@@ -48,15 +50,20 @@ RECORDS:
 				continue RECORDS
 			}
 		}
+
+		for i, col := range column_names {
+			columns[col] = append(columns[col], record[i])
+		}
 	}
 
-	return column_names, units, descriptions
+	return column_names, units, descriptions, columns
 }
 
 func main() {
 	kingpin.Parse()
-	column_names, units, descriptions := parse_file(*filename)
+	column_names, units, descriptions, cols := parse_file(*filename)
 	fmt.Println(column_names)
 	fmt.Println(units)
 	fmt.Println(descriptions)
+	fmt.Println(cols)
 }
