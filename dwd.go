@@ -2,6 +2,8 @@ package main
 
 //import "bufio"
 //import "encoding/csv"
+import "net/http"
+import "net/url"
 import "compress/bzip2"
 import "fmt"
 import "gopkg.in/alecthomas/kingpin.v2"
@@ -17,7 +19,7 @@ import "github.com/PuerkitoBio/fetchbot"
 
 var (
 	files = kingpin.Arg("files", "Filename to load").Strings()
-	urls  = kingpin.Arg("--url", "URLs to crawl").Strings()
+	urls  = kingpin.Flag("url", "URLs to crawl").Strings()
 )
 
 func check(err error) {
@@ -100,22 +102,33 @@ func query_urls(urls []string, entries map[string][]entry) {
 		fmt.Printf("[ERR] %s %s - %s\n", ctx.Cmd.Method(), ctx.Cmd.URL(), err)
 	}))
 
+	hosts := make([]string, 0)
+	for _, query_url := range urls {
+		u, err := url.Parse(query_url)
+		check(err)
+		hosts = append(hosts, u.Host)
+	}
+
 	mux.Response().Method("GET").ContentType("text/html").Handler(fetchbot.HandlerFunc(
 		func(ctx *fetchbot.Context, res *http.Response, err error) {
-			fmt.Printf("Hello, %q", html.EscapeString(r.URL.Path))
+			fmt.Printf("Hello, %q", ctx.Cmd.URL())
 		}))
 
-	mux.Response().Method("HEAD").Host(u.Host).ContentType("text/html").Handler(fetchbot.HandlerFunc(
-		func(ctx *fetchbot.Context, res *http.Response, err error) {
-			if _, err := ctx.Q.SendStringGet(ctx.Cmd.URL().String()); err != nil {
-				fmt.Printf("[ERR] %s %s - %s\n", ctx.Cmd.Method(), ctx.Cmd.URL(), err)
-			}
-		}))
+	for _, host := range hosts {
+		mux.Response().Method("HEAD").Host(host).ContentType("text/html").Handler(fetchbot.HandlerFunc(
+			func(ctx *fetchbot.Context, res *http.Response, err error) {
+				if _, err := ctx.Q.SendStringGet(ctx.Cmd.URL().String()); err != nil {
+					fmt.Printf("[ERR] %s %s - %s\n", ctx.Cmd.Method(), ctx.Cmd.URL(), err)
+				}
+			}))
+		}
 
 	f := fetchbot.New(mux)
 	queue := f.Start()
-	defer queue.Close()
-	queue.SendStringHead("https://opendata.dwd.de/weather/cosmo/de/grib/03/t_2m/")
+	for _, query_url := range urls {
+		queue.SendStringHead(query_url)
+	}
+	queue.
 }
 
 func main() {
@@ -127,7 +140,8 @@ func main() {
 			parse_file(filename, arns_latlon, entries)
 		}
 	}
-	if *url != nil {
+	if *urls != nil {
+		query_urls(*urls, entries)
 	}
 	for _, entry := range entries["TMP"] {
 		fmt.Println(
