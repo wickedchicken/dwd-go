@@ -1,14 +1,23 @@
 package main
 
-import "bufio"
-import "gopkg.in/alecthomas/kingpin.v2"
+//import "bufio"
+//import "encoding/csv"
+import "compress/bzip2"
 import "fmt"
-import "encoding/csv"
-import "io"
+import "gopkg.in/alecthomas/kingpin.v2"
+
+//import "io"
+import "io/ioutil"
 import "os"
+import "time"
+import "math"
+
+import "github.com/amsokol/go-grib2"
+import "github.com/PuerkitoBio/fetchbot"
 
 var (
-	filename = kingpin.Arg("filename", "Filename to load").Required().String()
+	files = kingpin.Arg("files", "Filename to load").Strings()
+	urls  = kingpin.Arg("--url", "URLs to crawl").Strings()
 )
 
 func check(err error) {
@@ -17,53 +26,115 @@ func check(err error) {
 	}
 }
 
-func parse_file(filename string) ([]string, []string, []string, map[string][]string) {
+type latlon struct {
+	lat float64
+	lon float64
+}
+
+func latlon_dist(a latlon, b latlon) float64 {
+	// Calculate with opposite lon and same lon, in case lon is near 180
+	x := math.Pow(a.lon-b.lon, 2)
+	y := math.Pow(a.lat-b.lat, 2)
+	dist := math.Sqrt(x + y)
+
+	flip_x := math.Pow(a.lon+b.lon, 2)
+	flip_dist := math.Sqrt(flip_x + y)
+	return math.Min(dist, flip_dist)
+}
+
+type entry struct {
+	coord latlon
+	time  time.Time
+	value float32
+}
+
+func parse_file(filename string, targ latlon, entries map[string][]entry) {
 	f, err := os.Open(filename)
 	check(err)
 	defer f.Close()
 
-	var column_names []string
-	var units []string
-	var descriptions []string
+	uncompressed_data := bzip2.NewReader(f)
+	check(err)
 
-	columns := make(map[string][]string)
+	data, err := ioutil.ReadAll(uncompressed_data)
+	check(err)
 
-	r := csv.NewReader(bufio.NewReader(f))
-	r.Comma = ';'
-RECORDS:
-	for {
-		record, err := r.Read()
-		if err == io.EOF {
-			break
-		}
+	gribs, err := grib2.Read(data)
+	check(err)
 
-		headers := []*[]string{
-			&column_names,
-			&units,
-			&descriptions,
-		}
+	for _, g := range gribs {
+		var closest_entry *entry
+		var dist float64
+		for _, v := range g.Values {
+			lon := v.Longitude
+			if lon > 180.0 {
+				lon -= 360.0
+			}
 
-		for _, target := range headers {
-			if *target == nil {
-				*target = make([]string, len(record))
-				copy(*target, record)
-				continue RECORDS
+			new_entry := entry{
+				coord: latlon{lat: v.Latitude, lon: lon},
+				time:  g.VerfTime,
+				value: v.Value,
+			}
+			new_dist := latlon_dist(targ, new_entry.coord)
+			if closest_entry == nil {
+				closest_entry = &new_entry
+				dist = new_dist
+			} else {
+				if new_dist < dist {
+					closest_entry = &new_entry
+					dist = latlon_dist(targ, new_entry.coord)
+				}
 			}
 		}
-
-		for i, col := range column_names {
-			columns[col] = append(columns[col], record[i])
+		if closest_entry != nil {
+			entries[g.Name] = append(entries[g.Name], *closest_entry)
 		}
 	}
+}
 
-	return column_names, units, descriptions, columns
+func query_urls(urls []string, entries map[string][]entry) {
+	mux := fetchbot.NewMux()
+
+	mux.HandleErrors(fetchbot.HandlerFunc(func(ctx *fetchbot.Context, res *http.Response, err error) {
+		fmt.Printf("[ERR] %s %s - %s\n", ctx.Cmd.Method(), ctx.Cmd.URL(), err)
+	}))
+
+	mux.Response().Method("GET").ContentType("text/html").Handler(fetchbot.HandlerFunc(
+		func(ctx *fetchbot.Context, res *http.Response, err error) {
+			fmt.Printf("Hello, %q", html.EscapeString(r.URL.Path))
+		}))
+
+	mux.Response().Method("HEAD").Host(u.Host).ContentType("text/html").Handler(fetchbot.HandlerFunc(
+		func(ctx *fetchbot.Context, res *http.Response, err error) {
+			if _, err := ctx.Q.SendStringGet(ctx.Cmd.URL().String()); err != nil {
+				fmt.Printf("[ERR] %s %s - %s\n", ctx.Cmd.Method(), ctx.Cmd.URL(), err)
+			}
+		}))
+
+	f := fetchbot.New(mux)
+	queue := f.Start()
+	defer queue.Close()
+	queue.SendStringHead("https://opendata.dwd.de/weather/cosmo/de/grib/03/t_2m/")
 }
 
 func main() {
 	kingpin.Parse()
-	column_names, units, descriptions, cols := parse_file(*filename)
-	fmt.Println(column_names)
-	fmt.Println(units)
-	fmt.Println(descriptions)
-	fmt.Println(cols)
+	arns_latlon := latlon{lat: 52.534080, lon: 13.438340}
+	entries := make(map[string][]entry)
+	if *files != nil {
+		for _, filename := range *files {
+			parse_file(filename, arns_latlon, entries)
+		}
+	}
+	if *url != nil {
+	}
+	for _, entry := range entries["TMP"] {
+		fmt.Println(
+			"hey %v, %v, %v",
+			entry.coord,
+			entry.time.Format("2006-01-02T15:04:05-0700"),
+			entry.value,
+		)
+	}
 }
